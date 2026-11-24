@@ -1,0 +1,73 @@
+# realme GT7 (RMX6688, CN) — MediaTek Dimensity 9400+ (MT6991), Android 15 / realme UI 6.0.
+# Everything below was read out of the phone's own full OTA package
+# RMX6688_15.0.1.551(CN01) (build RMX6688_11.A.29_0290_202505192052, AP3A.240617.008),
+# not guessed. Values that could only come from the phone itself are marked TODO.
+#
+# OPPO project id 24618 (OTA metadata oplus_project_numbers, and the touch firmware
+# folders /vendor/firmware/tp/24618 in the stock recovery ramdisk).
+
+[device]
+codename = "gt7"
+brand = "realme"
+model = "realme GT7"
+# A/B, dynamic partitions, no system-as-root surprises: the OTA is a full AB payload.
+ab = true
+# ro.vendor.mediatek.platform=MT6991, ro.board.platform=mt6991, vendor modules such as
+# clk-dbg-mt6991.ko. MediaTek sells MT6991 as the Dimensity 9400+.
+soc = { hans = "天玑9400+", hant = "天璣9400+", en = "MediaTek Dimensity 9400+" }
+# my_product/build.prop: ro.build.version.oplusrom=V15.0.1 (oplusrom.display=15.0,
+# realmeui=V6.0). The default ro.build.display.id would show RMX6688_11_A.01 instead.
+os_version_prop = "ro.build.version.oplusrom"
+
+[display]
+# realme's own spec page: 6.80", FHD+ 2800x1280, 144 Hz flat panel.
+# The KMS surface's real mode is used to draw; these numbers size the info page
+# and the preview only.
+width = 1280
+height = 2800
+# my_product/build.prop: ro.sf.lcd_density=560, ro.oplus.density.qhd_default=560
+# (screenzoom steps 476/500/560/600/620).
+density = 560
+diagonal = 6.8
+# TODO: the panel's corner radius is in no prop and no dtbo node we could read; and the
+# screen is flat, so leaving it out only means square window corners until measured.
+
+[modules]
+# vendor_dlkm /lib/modules/modules.load already lists it, and the stock recovery
+# ramdisk carries the same set: the Synaptics TCM2 driver, the one the dtbo's
+# synaptics,tcm-spi-hbp / oplus,tp_noflash nodes ask for. Its dependencies
+# (oplus_bsp_fw_update, panel_event_notifier) come in through modules.dep.
+# No [touch].writes: this driver presents a plain input device, like the GT8's.
+load = ["oplus_bsp_synaptics_tcm2"]
+
+[backup]
+# Baseband settings and sensor calibration, per the phone's own recovery.fstab:
+# nvdata is the NVRAM filesystem, protect_f/protect_s the secure partitions, nvram
+# the raw one. TODO: confirm the names against ls /dev/block/by-name on the phone.
+# nvcfg is MTK's own configuration filesystem, mounted at /mnt/vendor/nvcfg.
+efs = ["nvdata", "nvcfg", "nvram", "protect1", "protect2"]
+
+# No [firmware]: the GT8's "modem" is a vfat firmware mount, but on this MTK phone the
+# modem images sit raw inside md1img (recovery.fstab: emmc), and the drivers' firmware
+# files are already in the vendor image, so there is no partition to mount.
+#
+# No [[service]]: the modules skyward loads cover the post-boot kernel work; this
+# stock recovery ramdisk has no init.kernel.post_boot*.sh equivalent to run.
+#
+# No [update]: skyward's update check speaks Xiaomi's miota server protocol only.
+#
+# [partitions] is left out, not forgotten: this is a Trustonic build, and which of
+# its filesystems the secure world needs mounted (nvdata, protect_f, protect_s are
+# the candidates its own table names) is only provable on the phone.
+#
+# TODO [wipe] logs / [haptics]: need the phone (the aw8697 haptic driver keeps its
+# resonance sysfs path, which no image we can read spells out).
+#
+# [stock] is left out on purpose: this package carries NO recovery partition (47
+# partitions, no 'recovery'), so skyward-pack cannot fetch one from it. The phone's own
+# recovery.fstab still lists /dev/block/by-name/recovery, and vendor_boot holds the
+# real recovery ramdisk (system/bin/recovery, recovery.fstab, phoenix_recovery), so a
+# stock recovery image has to be dumped on the phone and passed with --stock.
+# [stock]
+# version = "RMX6688_15.0.1.551(CN01)"
+# recovery = "<sha256 of the dumped recovery partition>"

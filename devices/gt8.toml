@@ -1,0 +1,224 @@
+# realme GT8 (RMX6699, the Chinese market one), on Qualcomm's sm87xx
+# platform, which the device trees call sun and sunp.
+#
+# Read from the phone's own full update package: the payload's recovery
+# partition, its dtbo overlays (project id 25600, the one libinit maps to
+# RMX6699), its my_manifest, my_product, odm, vendor and vendor_dlkm
+# partitions. The marketed numbers come from realme's published spec sheet
+# for this model. Whatever neither source answers is marked TODO and left
+# out rather than guessed.
+
+[device]
+codename = "gt8"
+brand = "realme"
+model = "realme GT8"
+ab = true
+# The package reports the platform (qcom,sun / qcom,sunp) and an eight-core
+# part clocked to 4.32 GHz, which is Qualcomm's SM8750; realme's spec sheet
+# names it 骁龙®8至尊版.
+soc = { hans = "骁龙®8至尊版移动平台", hant = "驍龍®8至尊版移動平台", en = "Snapdragon® 8 Elite Mobile Platform" }
+# Realme UI carries its version on the my_product partition's props, where
+# the installed system is read from: ro.build.version.oplusrom (V16.0.0 for
+# this build, with ro.build.version.oplusrom.display 16.0 beside it and
+# ro.build.version.realmeui V7.0). Unlike Xiaomi's ro.mi.os.version.*, this
+# is the one the system's own settings page shows as the OS version.
+os_version_prop = "ro.build.version.oplusrom"
+
+[display]
+# What the phone itself draws on: 1440 by 3136. The overlays' panel timings
+# name 1440 by 3200 at 120, 90, 60, 40 and 30 Hz (Novatek's NT37801 driver on
+# a CSOT OLED, in command mode with DSC over CPHY), and the panel's own modes
+# offer 1440x3136 and 1080x2352, each at 60, 90, 120 and 144 Hz; the phone's
+# display service reports only those two, with 1440x3136 as the default one,
+# its cutout and its physical size both 1440 by 3136. The 64 lines the timing
+# carries beyond the drawn surface are the under-display sensor's region.
+width = 1440
+height = 3136
+# What the phone itself ships with: my_product's ro.sf.lcd_density, and its
+# ro.oplus.density.qhd_default, both 640, with the sizes ColorOS lets a page
+# be zoomed to listed as ro.density.screenzoom.qdh 500, 560, 640, 680, 720.
+# The UI works out a pixel per dp as density / 160, so this is the one the
+# stock build boots at.
+density = 640
+# realme's spec sheet for the model: 6.79 inches, 1440 by 3136 and 508 ppi,
+# which is what the phone's own props (ro.oplus.resolution.high 1440,3136)
+# and its display service report as well.
+diagonal = 6.79
+# The corners the phone itself round the screen to: its display service lists
+# four rounded corners of radius 132 on a 1080-wide surface, which it takes a
+# scale of 0.75 to reach from the panel's own 1440 (physicalPixelDisplaySize
+# Ratio). A radius in pixels on the surface the recovery draws on is therefore
+# 132 / 0.75, which the UI rounds a page's corners to and no further.
+corner_radius = 176
+
+# The touchscreen driver is a module, and it sits in vendor_dlkm as
+# /vendor/lib/modules/oplus_bsp_synaptics_tcm2.ko; its aliases match the
+# overlay's enabled node (spi:synaptics_tcm_spi, and the of compatibles
+# synaptics,tcm-spi-hbp and oplus,tp_noflash). It pulls in
+# oplus_bsp_fw_update.ko and panel_event_notifier.ko, which the module
+# source's modules.dep loads first. vendor_dlkm is already one of the
+# default sources.
+[modules]
+# nxp-nci drives the SN100 series NFC controller, and the phone's secure
+# element sits on that controller's own die: the kernel makes no /dev/nq-nci
+# until the module is in, and the phone's init.SN100x.nfc.rc expects that
+# node (it chmods it to 0660 nfc on post-fs-data). The TWRP device tree for
+# this platform loads it for the same reason (its TW_LOAD_VENDOR_MODULES).
+# Dependencies come from vendor_dlkm's modules.dep, as the touchscreen's do.
+load = ["oplus_bsp_synaptics_tcm2", "nxp-nci"]
+
+# The firmware of the phone's processors and radios is on the modem
+# partition, which the phone's own recovery leaves out of the drivers'
+# reach. That it is a vfat filesystem the drivers can look into is the
+# package's own recovery.fstab: /dev/block/bootdevice/by-name/modem is
+# mounted at /vendor/firmware_mnt with ro,shortname=lower,uid=1000 and the
+# firmware_file label.
+[firmware]
+partition = "modem"
+
+# The platform's own post-boot script, the one the phone's recovery also
+# runs: revision and RT throttling, WALT's scheduler, core_ctl's clusters and
+# the frequency floors. It is the sun build's, as the same script names in the
+# recovery's init.recovery.qcom.rc.
+[[service]]
+path = "/vendor/bin/sh"
+args = ["/vendor/bin/init.kernel.post_boot-sun_default_6_2.sh"]
+libraries = ["/system/lib64", "/vendor/lib64"]
+oneshot = true
+user = "root"
+groups = ["root", "system", "wakelock", "graphics"]
+
+# What the phone's keys go through, in the order the phone's own init starts
+# them: QSEE's daemon, keymint, gatekeeper and the SPU's daemon. The weaver
+# and the secure element come after these on their own (see
+# crates/skyward-programs/src/secure.rs), which is the order the TWRP device
+# tree for this platform uses as well: modules, qseecomd, keymint,
+# gatekeeper, ssgtzd, then the weaver and the element.
+#
+# keymint and gatekeeper keep the recovery's own /system/lib64 and only that.
+# Started by hand with no library path of its own, keymint registers with the
+# service directory at once; started with the installed system's libraries in
+# front of it, it runs, sits in its binder loop and never registers - no
+# error, no log, nothing to wait for. The vendor partition's libbinder.so
+# cannot be put in front either: it asks for libapexsupport.so, which only the
+# installed system has. qseecomd and ssgtzd need none of this and keep the
+# installed system's libraries first.
+#
+# qseecomd is what all of them reach the secure world through. The phone's rc
+# gives it a notify-topology socket for that.
+[[service]]
+path = "/vendor/bin/qseecomd"
+libraries = ["/system/lib64", "/mnt/system/system/lib64", "/vendor/lib64", "/odm/lib64"]
+user = "root"
+groups = ["root", "drmrpc"]
+
+# keymint works the password into the key the data partition is opened with.
+# The phone's rc has it as an early_hal and starts it at on init.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.security.keymint-service-qti"
+libraries = ["/system/lib64"]
+user = "system"
+groups = ["system", "drmrpc"]
+ready_service = "android.hardware.security.keymint.IKeyMintDevice/default"
+
+# gatekeeper is what tells whether the password was right. The phone's rc
+# enables it only where the SPU is not the level security runs at. Its own
+# libqtigatekeeper.so sits under /vendor/lib64/hw, which the recovery does
+# not search, so that directory is named here as well.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.gatekeeper-service-qti"
+libraries = ["/system/lib64", "/vendor/lib64/hw"]
+user = "system"
+groups = ["system"]
+ready_service = "android.hardware.gatekeeper.IGatekeeper/default"
+
+# ssgtzd is the daemon of the SPU, which keymint's strongbox half runs on.
+# The phone's rc starts it once its listeners are registered.
+[[service]]
+path = "/vendor/bin/ssgtzd"
+libraries = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap", "/vendor/lib64", "/odm/lib64"]
+user = "system"
+groups = ["system", "oem_2912", "wakelock"]
+capabilities = ["WAKE_ALARM", "BLOCK_SUSPEND"]
+
+# The kernel makes /dev/nq-nci for the NFC controller the secure element sits
+# in, and the phone's init.SN100x.nfc.rc hands it to nfc:nfc with 0660 once
+# its data partition is up; until then the node is root's alone, so the same
+# is done here before the key services are started.
+[[owners]]
+user = "nfc"
+group = "nfc"
+mode = 0o660
+paths = ["/dev/nq-nci"]
+
+# logd's libraries come from the installed system, which is where the recovery
+# reads the phone's programs from. Without them the phone's own programs
+# still run, and only what they log is lost.
+[logd]
+libraries = ["/mnt/system/system/lib64/libsysutils.so", "/mnt/system/system/lib64/libcap.so"]
+
+# Whether anything has to be written before touches arrive: the overlays
+# enable the Synaptics S3910 over SPI (synaptics_tcm_hbp, 19 MHz, interrupt
+# 162) and disable both the goodix-berlin and the plain synaptics_tcm nodes
+# beside it. The driver builds an input device of its own
+# (synaptics_tcm/touch_input), so no program of the phone's has to run, and no
+# raw mode has to be turned on the way Xiaomi's touch programs are — [touch]
+# stays out. The packaged driver carries a double-tap knob but no absolute
+# path worth writing blind, so nothing is written blind.
+
+# The secure world keeps files of its own here, so it is mounted before any
+# page needs it. The package's recovery.fstab has it as ext4 on
+# /dev/block/bootdevice/by-name/persist.
+[partitions]
+mounted = ["persist"]
+
+# The motor is the platform's own (qcom-hv-haptics: the only input device with
+# force-feedback events is event4, named qcom-hv-haptics, carrying its strength
+# queue), and it says its resonant frequency in
+# /sys/class/qcom-haptics/lra_frequency_hz, 168 Hz on this phone. Qualcomm's
+# own HAL plays the light end of its slider at half the waveform's drive and
+# its strong end at all of it. No waveform is written here: the driver keeps
+# none reachable outside its debugfs folder, which the running system does not
+# mount, so the click and the ticks are made from samples at that frequency, as
+# the K60 Pro's are. TODO: whether it keeps a waveform to be played by number,
+# read from haptics/effect0 once debugfs is mounted.
+# This driver reports /sys/class/qcom-haptics/lra_frequency_hz as 0 in the
+# recovery (the value comes from a calibration the recovery never runs), and
+# the period it gives beside it, /sys/class/qcom-haptics/t_lra_us = 5882,
+# puts the motor at 170 Hz: skyward reads the frequency, and the period when
+# the frequency is 0.
+[haptics]
+resonance = "/sys/class/qcom-haptics/lra_frequency_hz"
+strength = { lightest = 0.5, strongest = 1.0 }
+
+# What a backup keeps of the phone's keys and radio calibration, as the
+# phone's own table of partitions names them: the baseband's EFS is modemst1
+# and modemst2, its golden copies are fsg and fsc, and the sensors'
+# calibration is in persist. All five are partitions of their own here
+# (fsg 4194304 bytes, fsc 131072, modemst1 and modemst2 4194304 each, persist
+# 67108864), so this is the same set the Xiaomi builds on this platform use.
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+
+# TODO: the stock build this recovery is made on. The package is a full A/B
+# update of the build whose recovery partition is 104857600 bytes, which the
+# phone's own table mounts at /recovery from
+# /dev/block/bootdevice/by-name/recovery, and whose SHA-256 is:
+#   26f99f4b1c6bfda3e7b7d8933bd9b5de46f3474ecbe32e2a6ec41d26fbc02834
+# The phone's recovery partition holds that image no longer: the one on it has
+# a ramdisk of 56430817 bytes against the package's 55606246, an AVB footer
+# giving an original image of 56393728 against 55611392, and the SHA-256
+# 03d8de02c1e2d38708a2add17417c3fd7bbb0191e0a561ea09de479cb9949088 — the
+# recovery built from this repository, flashed to the phone. The hash above is
+# the stock build's, and is the one [stock] takes.
+# Its build is RMX6699_16.0.0.252(CN01) (ota-id
+# RMX6699_11.A.61_0610_202511131828, Android 16, security patch 2025-10-01).
+# What is still missing is the HTTPS address of that package, which [stock]
+# needs along with the version it has to find in the file name:
+# [stock]
+# version = "RMX6699_16.0.0.252(CN01)"
+# package = "https://..."
+# recovery = "26f99f4b1c6bfda3e7b7d8933bd9b5de46f3474ecbe32e2a6ec41d26fbc02834"
+
+# [update] is out: the server it names speaks Xiaomi's own protocol
+# (update.miui.com's miotaV3.php), which a realme build is not told of.
