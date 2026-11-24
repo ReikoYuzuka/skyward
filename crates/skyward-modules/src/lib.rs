@@ -10,19 +10,31 @@ pub mod modprobe;
 /// partitions where they are mounted, and the kernel's own modules in
 /// system_dlkm, which it also keeps in one folder.
 pub fn source_dir(source: &str) -> Result<PathBuf> {
-    Ok(PathBuf::from(match source {
-        "vendor_boot" => "/lib/modules",
-        "vendor_dlkm" => "/vendor_dlkm/lib/modules",
-        "vendor" => "/vendor/lib/modules",
-        "system_dlkm" => "/system_dlkm/flatten/lib/modules",
+    Ok(match source {
+        "vendor_boot" => PathBuf::from("/lib/modules"),
+        "vendor_dlkm" => PathBuf::from("/vendor_dlkm/lib/modules"),
+        "vendor" => PathBuf::from("/vendor/lib/modules"),
+        // The kernel's own modules are in system_dlkm's own folder on this
+        // platform, which is where the phone's init reads them
+        // (/system_dlkm/lib/modules), and one level down under flatten on
+        // the images that keep them there.
+        "system_dlkm" => {
+            let flat = PathBuf::from("/system_dlkm/lib/modules");
+            if flat.is_dir() {
+                flat
+            } else {
+                PathBuf::from("/system_dlkm/flatten/lib/modules")
+            }
+        }
         _ => bail!("unknown module source {source:?}"),
-    }))
+    })
 }
 
 /// Load `names` (module names without `.ko`) with their dependencies. Each
 /// comes from the first of `dirs` that holds it, and its dependencies from
-/// that directory's modules.dep; a module the kernel already has counts as
-/// loaded. Returns the files loaded, dependencies first.
+/// that directory's modules.dep, taken from whichever of `dirs` holds them
+/// (see `resolve`); a module the kernel already has counts as loaded.
+/// Returns the files loaded, dependencies first.
 pub fn load(dirs: &[PathBuf], names: &[String]) -> Result<Vec<PathBuf>> {
     let mut loaded = Vec::new();
     for name in names {
@@ -33,8 +45,7 @@ pub fn load(dirs: &[PathBuf], names: &[String]) -> Result<Vec<PathBuf>> {
             .ok_or_else(|| anyhow!("{file} is in none of {dirs:?}"))?;
         let graph = parse_dep(dir)?;
         for m in graph.load_order(std::slice::from_ref(&file)) {
-            let path = graph
-                .resolve_path(&m)
+            let path = resolve(&m, dir, dirs)
                 .ok_or_else(|| anyhow!("{m} is listed in {}/modules.dep but missing", dir.display()))?;
             insmod(&path, "")?;
             loaded.push(path);
@@ -120,6 +131,19 @@ impl ModuleGraph {
     }
 }
 
+/// Where the module `m`, named by the modules.dep of `dir`, is: in that
+/// directory, or, failing that, in another source the recovery has. The two
+/// differ here: the driver in vendor asks for rfkill, which only the kernel's
+/// own folder in system_dlkm holds, and vendor's modules.dep names it by the
+/// path the installed system would have (/system/lib/modules/rfkill.ko).
+fn resolve(m: &str, dir: &Path, dirs: &[PathBuf]) -> Option<PathBuf> {
+    let graph = ModuleGraph { base: dir.to_path_buf(), deps: BTreeMap::new() };
+    if let Some(found) = graph.resolve_path(m) {
+        return Some(found);
+    }
+    dirs.iter().filter(|d| d.as_path() != dir).find_map(|d| find_file(d, m))
+}
+
 fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     let rd = fs::read_dir(dir).ok()?;
     for e in rd.flatten() {
@@ -181,5 +205,26 @@ mod tests {
     #[test]
     fn strips_paths_to_basenames() {
         assert_eq!(basename("kernel/drivers/foo/bar.ko"), "bar.ko");
+    }
+
+    #[test]
+    fn a_dependency_another_source_holds_is_taken_from_there() {
+        let root = std::env::temp_dir().join(format!("skyward-modules-{}", std::process::id()));
+        let vendor = root.join("vendor");
+        let system = root.join("system");
+        fs::create_dir_all(&vendor).expect("make the vendor folder");
+        fs::create_dir_all(&system).expect("make the system folder");
+        fs::write(vendor.join("modules.dep"), "/vendor/lib/modules/kiwi.ko: /system/lib/modules/rfkill.ko\n")
+            .expect("write the vendor modules.dep");
+        fs::write(vendor.join("kiwi.ko"), "").expect("write the driver");
+        fs::write(system.join("rfkill.ko"), "").expect("write the dependency");
+        let dirs = vec![vendor.clone(), system.clone()];
+        let order = parse_dep(&vendor)
+            .expect("read the vendor modules.dep")
+            .load_order(&["kiwi.ko".to_string()]);
+        assert_eq!(order, ["rfkill.ko".to_string(), "kiwi.ko".to_string()], "the dependency goes first");
+        assert_eq!(resolve(&order[0], &vendor, &dirs), Some(system.join("rfkill.ko")), "taken from the source that has it");
+        assert_eq!(resolve(&order[1], &vendor, &dirs), Some(vendor.join("kiwi.ko")), "taken from the source it was named in");
+        fs::remove_dir_all(&root).expect("take the folders away");
     }
 }

@@ -65,6 +65,12 @@ corner_radius = 176
 # node (it chmods it to 0660 nfc on post-fs-data). The TWRP device tree for
 # this platform loads it for the same reason (its TW_LOAD_VENDOR_MODULES).
 # Dependencies come from vendor_dlkm's modules.dep, as the touchscreen's do.
+#
+# system_dlkm is the kernel's own folder, and it is where rfkill is: the WLAN
+# driver in vendor asks for it, and vendor's modules.dep names it by the path
+# the installed system would have (/system/lib/modules/rfkill.ko), which the
+# recovery does not have. It is named last, as nothing else here comes from it.
+sources = ["vendor_boot", "vendor_dlkm", "vendor", "system_dlkm"]
 load = ["oplus_bsp_synaptics_tcm2", "nxp-nci"]
 
 # The firmware of the phone's processors and radios is on the modem
@@ -141,6 +147,22 @@ user = "system"
 groups = ["system", "oem_2912", "wakelock"]
 capabilities = ["WAKE_ALARM", "BLOCK_SUSPEND"]
 
+# The baseband is left alone. The WLAN's board data and regulatory database are
+# files the kernel's firmware loader reads from /firmware/image (bdwlan.elf,
+# regdb.bin), which ueventd hands to cnss2 when the driver asks for them, so the
+# driver comes up with no modem behind it and the interface starts at a MAC of
+# the driver's own.
+#
+# Bringing the modem up by hand, with the name service and rmt_storage beside
+# it, is what first made its QMI services appear (rmt_storage serves it the file
+# system its EFS and NV live in, without which it brings up nine services of
+# infrastructure and no QMI at all). None of that is needed for the WLAN, and a
+# remoteproc's number is not fixed - this phone numbers them spss, adsp, mss,
+# cdsp and soccp, 0 to 4, where starting the modem by hand once numbered it 1 -
+# so a number written here starts another core instead, as it did: it started
+# the audio DSP. The modem is what cnss2 reads the chip's MAC from when it is
+# up, and nothing more.
+
 # The kernel makes /dev/nq-nci for the NFC controller the secure element sits
 # in, and the phone's init.SN100x.nfc.rc hands it to nfc:nfc with 0660 once
 # its data partition is up; until then the node is root's alone, so the same
@@ -211,6 +233,30 @@ efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
 # does not run is no failure.
 [init]
 stop = ["phoenix_recovery"]
+
+# The WLAN chip is the platform's own: cnss2 drives it over PCIe, and the
+# overlays enable the node the driver looks for (qcom,cnss-kiwi), so the driver
+# is qca_cld3_kiwi_v2 in vendor/lib/modules and not the plain kiwi one, which
+# modules.blocklist keeps out. rfkill, which that driver asks for, is in the
+# kernel's own folder in system_dlkm, which is why that source is named above.
+#
+# Once /sys/kernel/cnss/fs_ready is written the driver loads the board data and
+# the regulatory database the phone keeps in /firmware/image/kiwi (bdwlan.elf,
+# 88860 bytes, and regdb.bin, 24278), which the kernel's firmware loader passes
+# to it through ueventd. Where the baseband is up, cnss2 reads the chip's MAC
+# over QMI as well; where it is not, the interface starts at a MAC of the
+# driver's own, which the phone's own networks accept as readily.
+#
+# The supplicant is the phone's own, and its control socket is the interface's
+# name in /data/vendor/wifi/sockets, which the recovery creates for the wifi
+# account. The directory is told of the service it registers (see main.rs).
+[wlan]
+modules = ["cnss2", "qca_cld3_kiwi_v2"]
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+service = "android.hardware.wifi.supplicant.ISupplicant/default"
+probe = "http://connect.rom.miui.com/generate_204"
+writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
 
 # TODO: the stock build this recovery is made on. The package is a full A/B
 # update of the build whose recovery partition is 104857600 bytes, which the
