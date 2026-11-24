@@ -63,11 +63,15 @@ const NXP_CONTROLLER: Driver = Driver { module: "nxp-nci", node: "/dev/nq-nci" }
 /// The makes of weaver, each by what the name of its program ends in, the
 /// longer endings first, with the driver its secure element takes where a
 /// recovery has to load one: Thales' and NXP's go through Android's secure
-/// element service, and Goodix's, whose program is named after no maker,
-/// through Goodix's own.
-const WEAVERS: [(&str, Through, Option<Driver>); 3] = [
+/// element service, NXP's with the driver of the NFC controller its element
+/// sits behind where the phone gives it one, and Goodix's, whose program is
+/// named after no maker, through Goodix's own. `.nxp` alone is NXP's weaver
+/// whose element sits behind Qualcomm's secure element service instead, as
+/// realme's android.hardware.weaver-service.nxp does.
+const WEAVERS: [(&str, Through, Option<Driver>); 4] = [
     (".thales", Through::ElementService, None),
     (".nxp-qti", Through::ElementService, Some(NXP_CONTROLLER)),
+    (".nxp", Through::ElementService, None),
     ("weaver-service", Through::Own("vendor.goodix.hardware.secure_element_aidl.IGdxEse"), None),
 ];
 
