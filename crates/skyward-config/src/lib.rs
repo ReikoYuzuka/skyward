@@ -65,6 +65,10 @@ pub struct DeviceConfig {
     /// libraries it needs.
     #[serde(default)]
     pub logd: Option<Logd>,
+    /// What the phone's own init does beside the recovery that has to be
+    /// undone, on phones that run one of its services through the recovery.
+    #[serde(default)]
+    pub init: Init,
     /// Files the phone's own init hands to an account as it boots, before
     /// the programs that open them start; a recovery runs none of init's
     /// boot actions.
@@ -84,6 +88,17 @@ pub struct DeviceConfig {
     /// The stock build the recovery is made on.
     #[serde(default)]
     pub stock: Option<Stock>,
+}
+
+/// What the phone's own init does beside the recovery that changes the
+/// phone underneath it, and so is stopped as the recovery starts: a maker's
+/// shell of a recovery, which counts down from boot and reboots the phone at
+/// the end of the count.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct Init {
+    /// The services of the phone's init the recovery stops as it starts.
+    #[serde(default)]
+    pub stop: Vec<String>,
 }
 
 /// The stock build a recovery is made on: the phone maker's full update
@@ -579,6 +594,9 @@ impl DeviceConfig {
                 ensure!(path.is_absolute() && plain && path.file_name().is_some(), "[[owners]] paths: {file} is not an absolute path to a file");
             }
         }
+        for name in &cfg.init.stop {
+            ensure!(!name.is_empty() && !name.contains('/') && !name.contains(char::is_whitespace), "[init] stop: {name} is not a service's name");
+        }
         if let Some(stock) = &cfg.stock {
             let name = stock.package.rsplit('/').next().unwrap_or_default();
             ensure!(
@@ -666,6 +684,19 @@ mod tests {
         assert_eq!((haptics.click, haptics.resonance.as_str()), (None, "/sys/class/qcom-haptics/lra_frequency_hz"));
         assert_eq!(haptics.strength, Strength { lightest: 0.15, strongest: 1.0 });
         assert!(haptics.scale_samples, "its driver plays samples at two strengths alone");
+    }
+
+    #[test]
+    fn the_services_of_the_phones_own_init_that_change_the_phone_are_stopped() {
+        let with = |body: &str| DeviceConfig::parse(&format!("[device]\ncodename = \"x\"\n[init]\n{body}\n"));
+        let cfg = with("stop = [\"phoenix_recovery\"]").unwrap();
+        assert_eq!(cfg.init.stop, ["phoenix_recovery".to_string()], "realme's shell counts down to a reboot of its own");
+        assert!(
+            DeviceConfig::parse("[device]\ncodename = \"x\"\n").unwrap().init.stop.is_empty(),
+            "a phone may run none beside the recovery"
+        );
+        assert!(with("stop = [\"/system/bin/init\"]").is_err(), "a path is not a service's name");
+        assert!(with("stop = [\"two words\"]").is_err(), "a name of two words is not a service's");
     }
 
     #[test]

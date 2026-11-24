@@ -200,6 +200,18 @@ strength = { lightest = 0.5, strongest = 1.0 }
 [backup]
 efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
 
+# realme's own shell of a recovery runs beside the recovery and counts down
+# from boot: /system/etc/init/hw/init.rc starts it at on init, and at 300
+# seconds it reboots the phone. Its command is in
+# vendor.oplus.phoenix.recovery.cmd, reboot_300_0, and its log in
+# /tmp/phoenix_recovery_log steps down by five every five seconds. It is
+# marked critical, so it cannot be killed; the service of the phone's init
+# it runs as is stopped instead, which the recovery's own init has no part
+# in, and which leaves the phone running Skyward. Stopping one the phone
+# does not run is no failure.
+[init]
+stop = ["phoenix_recovery"]
+
 # TODO: the stock build this recovery is made on. The package is a full A/B
 # update of the build whose recovery partition is 104857600 bytes, which the
 # phone's own table mounts at /recovery from

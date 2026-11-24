@@ -543,6 +543,24 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot, found: Result<keys::Fou
     {
         skyward_sys::kmsg(&format!("logd not started: {e:#}"))?;
     }
+    // The phone's own init runs beside the recovery, and some of what it
+    // starts changes the phone underneath: realme's shell of a recovery
+    // counts down from boot and reboots the phone when the count ends, 300
+    // seconds in. What a build does not run is no failure to stop, so the
+    // state init records is read back and said, rather than the set of the
+    // property being taken for the stopping.
+    let mut stopped: Vec<String> = Vec::new();
+    for service in &cfg.init.stop {
+        if let Err(e) = skyward_sys::set_prop("ctl.stop", service) {
+            skyward_sys::kmsg(&format!("the phone's own service {service} left running: {e:#}"))?;
+            continue;
+        }
+        let state = skyward_sys::prop(&format!("init.svc.{service}")).unwrap_or_default();
+        stopped.push(format!("{service} {state}"));
+    }
+    if !stopped.is_empty() {
+        skyward_sys::kmsg(&format!("the phone's own services stopped: {}", stopped.join(", ")))?;
+    }
     let services: Vec<Started> = cfg.services.iter().filter(|s| s.runs_on(&props)).cloned().map(Started::from).collect();
     // The drivers ask for their firmware by name, and the kernel looks only
     // in folders of its own unless told to pass on what it does not find
