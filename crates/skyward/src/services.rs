@@ -47,6 +47,13 @@ const WAITING_CALLERS: libc::c_int = 1 << 30;
 /// from.
 const LIBRARY_PATH: &str = "LD_LIBRARY_PATH";
 
+/// The folder each program's error output is kept in, one file for each
+/// program named after it: a program that ends before it is ready says why
+/// on its error stream, and a recovery that throws that stream away leaves
+/// nothing to read afterwards. The folder is in the ramdisk, which goes when
+/// the recovery does.
+const LOGS: &str = "/tmp/service-logs";
+
 /// Keep each program running, one thread per program: start it, and start
 /// it again whenever it exits. They are started in the order they are
 /// given, and one that says what it will be ready with holds up those
@@ -176,7 +183,8 @@ pub fn place(library: &Path, folder: &Path) -> Result<PathBuf> {
 /// Start the program, wait until it ends and give how it ended.
 fn to_its_end(s: &Service, who: &Credentials, given: &Given) -> Result<ExitStatus> {
     let handed = given.make()?;
-    command(s, who, given, &handed).status().with_context(|| format!("run {}", s.path))
+    let mut cmd = command(s, who, given, &handed)?;
+    cmd.status().with_context(|| format!("run {}", s.path))
 }
 
 /// What init hands a program as it starts it besides what its line gives
@@ -432,7 +440,8 @@ fn supervise(s: &Service, who: &Credentials, given: &Given) -> ! {
 /// Start the program and wait for it to end.
 fn run(s: &Service, who: &Credentials, given: &Given) -> Result<String> {
     let handed = given.make()?;
-    let mut child = command(s, who, given, &handed).spawn().with_context(|| format!("start {}", s.path))?;
+    let mut cmd = command(s, who, given, &handed)?;
+    let mut child = cmd.spawn().with_context(|| format!("start {}", s.path))?;
     // The program has its sockets now, and as init does, the recovery
     // keeps none of them open itself.
     drop(handed);
@@ -440,15 +449,25 @@ fn run(s: &Service, who: &Credentials, given: &Given) -> Result<String> {
     Ok(format!("pid {} ended: {status}", child.id()))
 }
 
+/// The error output of a program: a file of its own under `LOGS`, added to
+/// each time the program is started, so that a program that ends at once
+/// leaves what it said behind instead of nothing at all.
+fn errors(s: &Service) -> Result<Stdio> {
+    fs::create_dir_all(LOGS).with_context(|| format!("make {LOGS}"))?;
+    let name = Path::new(&s.path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "program".to_string());
+    let file = fs::OpenOptions::new().append(true).create(true).open(format!("{LOGS}/{name}.log")).with_context(|| format!("open the log of {}", s.path))?;
+    Ok(Stdio::from(file))
+}
+
 /// The program as it is started: with what it is given, from the top of the
-/// tree, reading and writing nothing of the recovery's, with the
-/// environment init sets it and each of the sockets in `handed` under the
-/// variable that names it, finding its libraries where it names them, and
-/// as `who`. Where init sets it folders of libraries of its own, they are
-/// searched after those it is given here.
-fn command(s: &Service, who: &Credentials, given: &Given, handed: &[(String, OwnedFd)]) -> Command {
+/// tree, reading nothing of the recovery's and writing only its errors to
+/// `LOGS`, with the environment init sets it and each of the sockets in
+/// `handed` under the variable that names it, finding its libraries where
+/// it names them, and as `who`. Where init sets it folders of libraries of
+/// its own, they are searched after those it is given here.
+fn command(s: &Service, who: &Credentials, given: &Given, handed: &[(String, OwnedFd)]) -> Result<Command> {
     let mut cmd = Command::new(&s.path);
-    cmd.args(&s.args).current_dir("/").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.args(&s.args).current_dir("/").stdin(Stdio::null()).stdout(Stdio::null()).stderr(errors(s)?);
     let mut libraries = s.libraries.clone();
     for (name, value) in &given.environment {
         match name == LIBRARY_PATH {
@@ -480,7 +499,7 @@ fn command(s: &Service, who: &Credentials, given: &Given, handed: &[(String, Own
             who.take_on()
         })
     };
-    cmd
+    Ok(cmd)
 }
 
 /// Lock in memory every file the running programs have mapped or open on
