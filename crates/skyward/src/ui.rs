@@ -136,12 +136,15 @@ impl Backlight {
 /// on the backlight's own scale. The panels of the Xiaomi 13 and 15, of the
 /// 14 and the K80 series and one of the K90's give it only as the level
 /// their factory tests drive the panel to, on the backlight's own scale:
-/// the 13 Ultra's panels give that level as well, and it comes to the same
-/// half of their range as the normal maximum they give.
-const NORMAL_MAX: [(&str, &str); 3] = [
+/// the 13 Ultra's panels give that as well, and it comes to the same
+/// half of their range as the normal maximum they give. OPPO's and
+/// realme's panels give it as `oplus,dsi-brightness-normal-max-level` on
+/// the backlight's own scale, as the GT8's does at 3515 out of 4094.
+const NORMAL_MAX: [(&str, &str); 4] = [
     ("mi,normal-max-brightness-clone", "mi,max-brightness-clone"),
     ("mi,max-brightness-normal", "qcom,mdss-dsi-bl-max-level"),
     ("mi,mdss-dsi-fac-bl-max-level", "qcom,mdss-dsi-bl-max-level"),
+    ("oplus,dsi-brightness-normal-max-level", "qcom,mdss-dsi-bl-max-level"),
 ];
 
 /// The raw backlight level, out of `max`, at the panel's normal maximum.
