@@ -5,7 +5,7 @@ use skyward_config::Strength;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -151,13 +151,25 @@ fn takes_periodic(dev: &RawDevice) -> bool {
     dev.supported_ff().is_some_and(|ff| ff.contains(evdev::FFEffectCode::FF_PERIODIC))
 }
 
+/// The period one swing of the motor takes, in microseconds, in the file the
+/// driver keeps beside the frequency's.
+const PERIOD: &str = "t_lra_us";
+
 /// The motor's resonant frequency in hertz, from the file the driver says
-/// it in, in tenths of a hertz.
+/// it in, in tenths of a hertz. A driver whose calibration has not run yet
+/// says 0 there and gives the swing's period beside it, which says the same
+/// frequency, so the period is taken when the frequency is 0.
 fn resonance(file: &str) -> Result<f32> {
     let text = fs::read_to_string(file).with_context(|| format!("read {file}"))?;
     let tenths: u32 = text.split_whitespace().next().and_then(|n| n.parse().ok()).with_context(|| format!("{file} holds {text:?}"))?;
-    ensure!(tenths > 0, "{file} says the motor swings at 0 Hz");
-    Ok(tenths as f32 / 10.0)
+    if tenths > 0 {
+        return Ok(tenths as f32 / 10.0);
+    }
+    let period = Path::new(file).with_file_name(PERIOD);
+    let text = fs::read_to_string(&period).with_context(|| format!("{file} says the motor swings at 0 Hz, and {} is not there to give its period", period.display()))?;
+    let micros: u32 = text.split_whitespace().next().and_then(|n| n.parse().ok()).with_context(|| format!("{} holds {text:?}", period.display()))?;
+    ensure!(micros > 0, "{file} says the motor swings at 0 Hz, and {} says the swing takes no time", period.display());
+    Ok(1_000_000.0 / micros as f32)
 }
 
 /// A click as the driver loaded it: the slot the kernel keeps it in, and
