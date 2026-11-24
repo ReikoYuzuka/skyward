@@ -132,7 +132,10 @@ pub fn read(text: &str) -> Result<Script> {
 /// The lines of a script that hold words, each with the number of the line
 /// it begins on and its words, split as init splits them: at blanks; with
 /// what is between double quotes kept as it is; with a `#` where a word
-/// would begin leaving the rest of the line out; and with a backslash
+/// would begin leaving the rest of the line out; with a `//` where a line
+/// begins, and with what lies between `/*` and `*/` where a line begins,
+/// left out the same way, as the phone's own vendors comment whole files
+/// out; and with a backslash
 /// taking the character after it as it is, or, before `n`, `r` or `t`, as
 /// the character C writes so, or, before the end of the line, carrying the
 /// line on in the next past the blanks that one begins with.
@@ -155,6 +158,33 @@ fn lines(text: &str) -> Result<Vec<(usize, Vec<String>)>> {
             ' ' | '\t' | '\r' => words.extend(word.take()),
             '#' if word.is_none() => {
                 while chars.next_if(|&c| c != '\n').is_some() {}
+            }
+            // OPPO's own scripts comment whole files out with C's markers, which
+            // init never sees: a line beginning with // is left out, and what
+            // lies between /* and */ is passed over, its lines counted.
+            '/' if word.is_none() && words.is_empty() && chars.peek() == Some(&'/') => {
+                while chars.next_if(|&c| c != '\n').is_some() {}
+            }
+            '/' if word.is_none() && words.is_empty() && chars.peek() == Some(&'*') => {
+                chars.next();
+                loop {
+                    match chars.next() {
+                        None => break,
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            chars.next();
+                            break;
+                        }
+                        Some('\n') => {
+                            words.extend(word.take());
+                            if !words.is_empty() {
+                                out.push((began, std::mem::take(&mut words)));
+                            }
+                            number += 1;
+                            began = number;
+                        }
+                        Some(_) => {}
+                    }
+                }
             }
             '"' => {
                 let quoted = word.get_or_insert_with(String::new);
@@ -310,6 +340,16 @@ mod tests {
         assert_eq!(weaver.capabilities.as_deref(), Some(&strings(&["WAKE_ALARM"])[..]));
         assert_eq!(weaver.interfaces, ["android.hardware.weaver.IWeaver/default"]);
         assert!(weaver.disabled && weaver.oneshot);
+    }
+
+    #[test]
+    fn a_script_commented_out_with_slashes_says_nothing() {
+        let script = read("//service vendor.contexthub /vendor/bin/hw/contexthub\n//    class hal\n").unwrap();
+        assert!(script.programs.is_empty(), "a line beginning with // is left out");
+        let script = read("/******\n** A banner, as OPPO writes one.\n** File: - occe_create\n*******/\nservice vendor.occe /odm/bin/occe\n").unwrap();
+        assert_eq!(script.programs.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["vendor.occe"], "what lies between /* and */ is passed over");
+        let script = read("service vendor.alpha /vendor/bin/alpha\n/*\nservice vendor.beta /vendor/bin/beta\n*/\nservice vendor.gamma /vendor/bin/gamma\n").unwrap();
+        assert_eq!(script.programs.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["vendor.alpha", "vendor.gamma"]);
     }
 
     #[test]
