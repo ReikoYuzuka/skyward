@@ -5,6 +5,7 @@
 use crate::parcel::Parcel;
 #[cfg(target_os = "android")]
 use crate::status;
+#[cfg(target_os = "android")]
 use anyhow::{Context, Result};
 
 /// The directory every program registers with and looks things up in.
