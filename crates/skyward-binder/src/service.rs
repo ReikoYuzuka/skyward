@@ -44,9 +44,49 @@ fn methods_of(sdk: u32) -> Methods {
 /// The recovery's own version, which its property files give.
 const SDK: &str = "ro.build.version.sdk";
 
-fn methods() -> Result<Methods> {
-    let sdk = skyward_sys::prop(SDK).with_context(|| format!("the recovery says no {SDK}"))?;
-    Ok(methods_of(sdk.parse().with_context(|| format!("{SDK} is {sdk:?}"))?))
+/// The numbering the directory of this phone keeps, settled once. What the
+/// recovery was built as says which one its own directory would keep, but
+/// the directory is often the installed system's own program: on a phone
+/// whose recovery was built as Android 15 the directory is the Android 16
+/// one, and the numbering the recovery was built as never answers it. So
+/// the first listing that the directory answers decides, and the other
+/// numbering is tried where that one is turned away.
+#[cfg(target_os = "android")]
+static CONFIRMED: std::sync::OnceLock<Methods> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "android")]
+fn methods(binder: &crate::driver::Binder) -> Result<Methods> {
+    if let Some(settled) = CONFIRMED.get() {
+        return Ok(*settled);
+    }
+    let said = skyward_sys::prop(SDK).with_context(|| format!("the recovery says no {SDK}"))?;
+    let sdk: u32 = said.parse().with_context(|| format!("{SDK} is {said:?}"))?;
+    let built = methods_of(sdk);
+    let other = methods_of(match sdk >= LOOKUPS_DECLARED {
+        true => LOOKUPS_DECLARED - 1,
+        false => LOOKUPS_DECLARED,
+    });
+    for numbering in [built, other] {
+        if answers(binder, numbering) {
+            let _ = CONFIRMED.set(numbering);
+            return Ok(numbering);
+        }
+    }
+    Ok(built)
+}
+
+/// Whether the directory answers the listing this numbering asks for. The
+/// numbering it does not keep is one it turns away as a call it does not
+/// have, which is told apart from a listing it does answer by the status
+/// the reply opens with.
+#[cfg(target_os = "android")]
+fn answers(binder: &crate::driver::Binder, numbering: Methods) -> bool {
+    let Ok(directory) = binder.directory() else { return false };
+    let mut call = Parcel::call(DIRECTORY);
+    call.i32(DUMP_PRIORITY_ALL);
+    let Ok(reply) = directory.transact(numbering.list_services, &call) else { return false };
+    let mut read = reply.read();
+    status::ok(&mut read).is_ok()
 }
 
 /// Every dump priority a service can register at, and the one a service
@@ -87,7 +127,7 @@ pub fn find<'a>(binder: &'a crate::driver::Binder, name: &str) -> Result<Option<
     let directory = binder.directory()?;
     let mut call = Parcel::call(DIRECTORY);
     call.string(name);
-    let reply = directory.transact(methods()?.check_service, &call).with_context(|| format!("look up {name}"))?;
+    let reply = directory.transact(methods(binder)?.check_service, &call).with_context(|| format!("look up {name}"))?;
     let mut read = reply.read();
     status::ok(&mut read).with_context(|| format!("look up {name}"))?;
     match read.object().with_context(|| format!("read what the directory answered for {name}"))? {
@@ -108,7 +148,7 @@ pub fn add(binder: &crate::driver::Binder, name: &str, number: u64) -> Result<()
     call.object(number);
     call.bool(false);
     call.i32(DUMP_PRIORITY_DEFAULT);
-    let reply = directory.transact(methods()?.add_service, &call).with_context(|| format!("register {name}"))?;
+    let reply = directory.transact(methods(binder)?.add_service, &call).with_context(|| format!("register {name}"))?;
     status::ok(&mut reply.read()).with_context(|| format!("register {name}"))
 }
 
@@ -119,7 +159,7 @@ pub fn names(binder: &crate::driver::Binder) -> Result<Vec<String>> {
     let directory = binder.directory()?;
     let mut call = Parcel::call(DIRECTORY);
     call.i32(DUMP_PRIORITY_ALL);
-    let reply = directory.transact(methods()?.list_services, &call).context("list what has registered")?;
+    let reply = directory.transact(methods(binder)?.list_services, &call).context("list what has registered")?;
     let mut read = reply.read();
     status::ok(&mut read).context("list what has registered")?;
     let count = read.i32().context("read how many have registered")?;
@@ -151,7 +191,7 @@ pub fn declared(binder: &crate::driver::Binder, name: &str) -> Result<bool> {
     let directory = binder.directory()?;
     let mut call = Parcel::call(DIRECTORY);
     call.string(name);
-    let reply = directory.transact(methods()?.is_declared, &call).with_context(|| format!("ask whether {name} is described"))?;
+    let reply = directory.transact(methods(binder)?.is_declared, &call).with_context(|| format!("ask whether {name} is described"))?;
     let mut read = reply.read();
     status::ok(&mut read).with_context(|| format!("ask whether {name} is described"))?;
     read.bool().with_context(|| format!("read whether {name} is described"))
