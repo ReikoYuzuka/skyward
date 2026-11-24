@@ -271,11 +271,16 @@ writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
 # the stock build's, and is the one [stock] takes.
 # Its build is RMX6699_16.0.0.252(CN01) (ota-id
 # RMX6699_11.A.61_0610_202511131828, Android 16, security patch 2025-10-01).
-# What is still missing is the HTTPS address of that package, which [stock]
-# needs along with the version it has to find in the file name:
+# There is no standing address of that package: realme's site hands out a
+# link signed for about a day (sign, Expires and Signature in the query),
+# and the same path without them answers 403. The package is taken from a
+# copy kept on this machine instead, which [stock] reads the way it reads an
+# address: the OTA zip itself, or the payload.bin taken out of it, under
+# either a local path or an https:// one.
 # [stock]
 # version = "RMX6699_16.0.0.252(CN01)"
-# package = "https://..."
+# package = "D:/ota/17ccd207d2de4acfa1fe32969030514e.zip"
+# package = "/home/me/ota/payload.bin"
 # recovery = "26f99f4b1c6bfda3e7b7d8933bd9b5de46f3474ecbe32e2a6ec41d26fbc02834"
 
 # [update] is out: the server it names speaks Xiaomi's own protocol

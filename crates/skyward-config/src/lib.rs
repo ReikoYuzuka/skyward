@@ -598,13 +598,27 @@ impl DeviceConfig {
             ensure!(!name.is_empty() && !name.contains('/') && !name.contains(char::is_whitespace), "[init] stop: {name} is not a service's name");
         }
         if let Some(stock) = &cfg.stock {
+            ensure!(!stock.version.is_empty(), "[stock] version: the build the package holds is not named");
+            // The package is either the address of the maker's own copy, named
+            // after the build it holds, or a copy of it kept on this machine:
+            // the OTA zip itself, or the payload.bin taken out of one. A copy
+            // is not named after the build, so `version` says which it holds.
             let name = stock.package.rsplit('/').next().unwrap_or_default();
-            ensure!(
-                stock.package.starts_with("https://") && name.ends_with(".zip") && name.contains(&stock.version) && !stock.version.is_empty(),
-                "[stock] package: {} is not an HTTPS address of the full package of {}",
-                stock.package,
-                stock.version
-            );
+            if stock.package.contains("://") {
+                ensure!(
+                    stock.package.starts_with("https://") && name.ends_with(".zip") && name.contains(&stock.version),
+                    "[stock] package: {} is not an HTTPS address of the full package of {}",
+                    stock.package,
+                    stock.version
+                );
+            } else {
+                let name = Path::new(&stock.package).file_name().and_then(|name| name.to_str()).unwrap_or_default();
+                ensure!(
+                    name.ends_with(".zip") || name.ends_with(".bin"),
+                    "[stock] package: {} is neither an HTTPS address of the full package nor a copy of it kept here, a .zip or a payload.bin",
+                    stock.package
+                );
+            }
             ensure!(
                 stock.recovery.len() == 64 && stock.recovery.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
                 "[stock] recovery: {} is not a SHA-256 in lowercase hex",
@@ -870,6 +884,25 @@ mod tests {
         let other = ok.replace("version = \"OS1.0.1.0", "version = \"OS1.0.2.0");
         assert!(DeviceConfig::parse(&format!("{other}recovery = \"{hash}\"\n")).is_err(), "the package of another build");
         assert_eq!(DeviceConfig::parse("[device]\ncodename = \"x\"\n").unwrap().stock, None);
+    }
+
+    #[test]
+    fn a_stock_build_may_be_the_package_kept_here() {
+        let with = |package: &str| {
+            DeviceConfig::parse(&format!(
+                "[device]\ncodename = \"x\"\n[stock]\nversion = \"{version}\"\npackage = \"{package}\"\nrecovery = \"faa425b10231a0cfe2d74ff34f344f032ee2d891ea5e9420bf4e67cd86d622a7\"\n"
+                , version = "RMX6699_16.0.0.252(CN01)", package = package
+            ))
+        };
+        assert!(with("D:/ota/17ccd207d2de4acfa1fe32969030514e.zip").is_ok());
+        assert!(with("/home/reiko/ota/payload.bin").is_ok(), "the payload taken out of one");
+        assert!(with("ota/payload.bin").is_ok(), "beside the configuration");
+        assert!(with("D:/ota/notes.txt").is_err(), "not a package");
+        assert!(with("D:/ota/payload.bin.tmp").is_err(), "a part of one");
+        assert!(with("http://d.example/x.zip").is_err(), "over plain HTTP");
+        assert!(with("").is_err(), "nothing");
+        let unnamed = "[device]\ncodename = \"x\"\n[stock]\nversion = \"\"\npackage = \"ota/payload.bin\"\nrecovery = \"faa425b10231a0cfe2d74ff34f344f032ee2d891ea5e9420bf4e67cd86d622a7\"\n";
+        assert!(DeviceConfig::parse(unnamed).is_err(), "the build is not named");
     }
 
     #[test]
